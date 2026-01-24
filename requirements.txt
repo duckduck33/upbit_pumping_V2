@@ -3,6 +3,7 @@ pandas>=1.5.0
 pyupbit>=0.2.34
 requests>=2.28.0
 rich>=13.0.0
+pytz>=2023.3
 
 # 참고사항:
 # - 같은 폴더에 auto_trading_system_gui.py 파일이 필요합니다

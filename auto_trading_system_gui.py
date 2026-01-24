@@ -16,8 +16,16 @@ import csv
 import os
 import tempfile
 import webbrowser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import pytz
 from rich.console import Console
+
+# 한국 시간대 설정
+KST = pytz.timezone('Asia/Seoul')
+
+def get_kst_now():
+    """한국 시간(KST)으로 현재 시간을 반환합니다."""
+    return datetime.now(KST)
 from rich.table import Table
 from rich.panel import Panel
 import tkinter as tk
@@ -194,7 +202,7 @@ class GUILogger:
     
     def log(self, message, level="INFO"):
         """로그 메시지를 GUI에 출력"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = get_kst_now().strftime("%H:%M:%S")
         log_message = f"[{timestamp}] [{level}] {message}\n"
         
         # GUI 스레드에서 실행되도록 보장
@@ -245,7 +253,7 @@ def wait_until_target_time(target_hour, target_minute, interval_minutes, logger=
         logger.log(f"기준 시간: {target_hour:02d}:{target_minute:02d}", "INFO")
         logger.log(f"분봉 간격: {interval_minutes}분", "INFO")
         logger.log(f"분석 시작 시간: {analysis_hour:02d}:{analysis_minute:02d} (기준 시간 + {interval_minutes}분)", "INFO")
-        logger.log(f"현재 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "INFO")
+        logger.log(f"현재 시간: {get_kst_now().strftime('%Y-%m-%d %H:%M:%S')} (KST)", "INFO")
     
     last_second = -1
     
@@ -256,7 +264,7 @@ def wait_until_target_time(target_hour, target_minute, interval_minutes, logger=
                 logger.log("대기가 중지되었습니다.", "WARNING")
             return False
         
-        now = datetime.now()
+        now = get_kst_now()
         current_hour = now.hour
         current_minute = now.minute
         current_second = now.second
@@ -347,7 +355,7 @@ def print_coins_under_price_and_volume(coins, max_price=None, min_volume=1000000
         logger.log(f"분봉 간격: {interval_minutes}분봉, 분석 시간: {target_hour:02d}:{target_minute:02d}", "INFO")
     
     final_filtered_coins = []
-    target_date = datetime.now().date()
+    target_date = get_kst_now().date()
     
     # 분봉 간격에 따라 interval 설정
     interval_map = {
@@ -1148,7 +1156,7 @@ def show_result_popup(root, filtered_results, max_slippage, csv_filename=None):
         html_content = get_slippage_result_html(filtered_results, max_slippage, csv_filename)
         
         # 임시 파일로 저장하고 브라우저에서 열기
-        temp_file = os.path.join(tempfile.gettempdir(), f'slippage_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html')
+        temp_file = os.path.join(tempfile.gettempdir(), f'slippage_results_{get_kst_now().strftime("%Y%m%d_%H%M%S")}.html')
         with open(temp_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
         
@@ -1185,7 +1193,7 @@ def show_profit_popup(profit_results):
             return
         
         # 임시 파일로 저장하고 브라우저에서 열기
-        temp_file = os.path.join(tempfile.gettempdir(), f'profit_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html')
+        temp_file = os.path.join(tempfile.gettempdir(), f'profit_results_{get_kst_now().strftime("%Y%m%d_%H%M%S")}.html')
         with open(temp_file, 'w', encoding='utf-8') as f:
             f.write(html_content)
         
@@ -1217,7 +1225,7 @@ def write_slippage_csv_and_popup(filtered_results, max_slippage, logger=None, ro
         if not os.path.exists(data_dir):
             os.makedirs(data_dir, exist_ok=True)
         
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = get_kst_now().strftime("%Y%m%d_%H%M%S")
         csv_filename = os.path.join(data_dir, f"slippage_results_{timestamp}.csv")
         with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
             fieldnames = ['순위', '코인', '일봉필터링', '가격변동률', '거래량변동률', '최저매도가', '평균매수가', '슬리피지', '호가스프레드', '소진호가수']
@@ -1720,7 +1728,7 @@ def buy_coins_from_list(upbit, coin_list, sell_percentage=3, sell_ratio=0.5, inv
                             if purchased_coins_dict is not None:
                                 purchased_coins_dict[coin] = {
                                     'buy_price': actual_buy_price,
-                                    'buy_time': datetime.now(),
+                                    'buy_time': get_kst_now(),
                                     'buy_amount': buy_amount_per_coin,
                                     'coin_balance': float(coin_balance),
                                     'sell_order_uuid': sell_order_uuid,  # 지정가 매도 주문 UUID 저장
@@ -2907,7 +2915,7 @@ class TradingGUI:
                 os.makedirs(data_dir, exist_ok=True)
             
             # 당일 날짜로 파일명 생성 (같은 날짜면 덮어쓰기)
-            today = datetime.now().strftime("%Y%m%d")
+            today = get_kst_now().strftime("%Y%m%d")
             csv_filename = os.path.join(data_dir, f"profit_results_{today}.csv")
             
             # 기존 파일이 있으면 읽어서 병합 (같은 코인은 최신 데이터로 업데이트)
@@ -3226,7 +3234,7 @@ class TradingGUI:
                                                             'coin_balance': actual_sell_volume,  # 실제 매도된 수량
                                                             'profit_pct': profit_pct,
                                                             'profit_amount': profit_amount,
-                                                            'sell_time': datetime.now(),
+                                                            'sell_time': get_kst_now(),
                                                             'sell_reason': '지정가 익절'
                                                         }
                                                     
@@ -3303,7 +3311,7 @@ class TradingGUI:
                                             'coin_balance': coin_balance,  # 프로그램이 매수한 실제 수량 저장
                                             'profit_pct': profit_pct,
                                             'profit_amount': profit_amount,
-                                            'sell_time': datetime.now(),
+                                            'sell_time': get_kst_now(),
                                             'sell_reason': '손절'
                                         }
                                         
@@ -3335,7 +3343,7 @@ class TradingGUI:
             last_logged_second = -1  # 마지막으로 로그를 출력한 초
             while True:
                 try:
-                    now = datetime.now()
+                    now = get_kst_now()
                     
                     # 종료 시간까지 남은 시간 계산
                     end_time = now.replace(hour=self.end_hour, minute=self.end_minute, second=0, microsecond=0)
@@ -3434,7 +3442,7 @@ class TradingGUI:
                                                 'coin_balance': coin_balance,  # 프로그램이 매수한 실제 수량 저장
                                                 'profit_pct': profit_pct,
                                                 'profit_amount': profit_amount,
-                                                'sell_time': datetime.now(),
+                                                'sell_time': get_kst_now(),
                                                 'sell_reason': '종료시간'
                                             }
                                         

@@ -15,6 +15,14 @@ import glob
 import csv
 import tempfile
 import webbrowser
+import pytz
+
+# 한국 시간대 설정
+KST = pytz.timezone('Asia/Seoul')
+
+def get_kst_now():
+    """한국 시간(KST)으로 현재 시간을 반환합니다."""
+    return datetime.now(KST)
 
 # Streamlit의 ScriptRunContext 경고 무시 (모듈 import 시 발생하는 경고)
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
@@ -57,6 +65,7 @@ def load_settings():
         "price_change_max": "5.0",
         "volume_change_min": "100",
         "slippage": "0.3",
+        "max_spread": "0.2",
         "day_candle_filter": False,
         "auto_trade": False,
         "sell_percentage": "3",
@@ -64,6 +73,7 @@ def load_settings():
         "investment_ratio": "100",
         "max_coins": "10",
         "stop_loss": "5",
+        "end_hours": "2",
         "exclude_coins": ""
     }
     
@@ -293,7 +303,7 @@ with st.sidebar:
         if st.button("🚀 분석 시작", type="primary", use_container_width=True):
             if not st.session_state.run_analysis:
                 # 현재 시간을 기준으로 target_hour, target_minute 설정
-                now = datetime.now()
+                now = get_kst_now()
                 target_hour = now.hour
                 target_minute = now.minute
                 
@@ -317,6 +327,34 @@ with st.sidebar:
                     'end_hours': int(end_hours) if enable_auto_trade else 2,
                     'stop_loss': float(stop_loss) if enable_auto_trade else 5.0
                 }
+                
+                # 설정값 로그 출력 (StreamlitLogger는 분석 실행 부분에서 정의되므로 여기서는 직접 로그 추가)
+                if 'logs' not in st.session_state:
+                    st.session_state.logs = []
+                
+                timestamp = get_kst_now().strftime("%H:%M:%S")
+                st.session_state.logs.append("=" * 60)
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 📋 분석 설정값 확인")
+                st.session_state.logs.append("=" * 60)
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 분봉: {interval_minutes}분봉")
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 가격 변동률: {price_change_min}% ~ {price_change_max}%")
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 거래량 변동 최소: {volume_change_min}%")
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 슬리피지 최대: {max_slippage}%")
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 호가스프레드 최대: {max_spread}%")
+                st.session_state.logs.append(f"[{timestamp}] [INFO] 일봉 필터링: {'활성화' if enable_day_candle_filter else '비활성화'}")
+                if exclude_coins:
+                    st.session_state.logs.append(f"[{timestamp}] [INFO] 제외 코인: {exclude_coins}")
+                if enable_auto_trade:
+                    st.session_state.logs.append(f"[{timestamp}] [INFO] 자동매매: 활성화")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 지정가 매도: {sell_percentage}%")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 매도 비중: {sell_ratio}")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 투자 비중: {investment_ratio}%")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 최대 코인 개수: {max_coins}개")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 손절: {stop_loss}%")
+                    st.session_state.logs.append(f"[{timestamp}] [INFO]   - 자동 종료: {end_hours}시간 후")
+                else:
+                    st.session_state.logs.append(f"[{timestamp}] [INFO] 자동매매: 비활성화")
+                st.session_state.logs.append("=" * 60)
                 
                 st.session_state.run_analysis = True
                 st.session_state.analysis_params = analysis_params
@@ -351,7 +389,7 @@ if st.session_state.scheduler_running:
                 st.session_state.analysis_params = data
                 # 로그에 기록
                 if 'logs' in st.session_state:
-                    log_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [SUCCESS] 큐에서 분석 실행 메시지 수신! 분석을 시작합니다."
+                    log_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [SUCCESS] 큐에서 분석 실행 메시지 수신! 분석을 시작합니다."
                     st.session_state.logs.append(log_msg)
                 # st.rerun()을 호출하여 즉시 분석 시작
                 st.rerun()
@@ -394,7 +432,7 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                 st.session_state.logs = []
         
         def log(self, message, level="INFO"):
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamp = get_kst_now().strftime("%H:%M:%S")
             log_entry = f"[{timestamp}] [{level}] {message}"
             st.session_state.logs.append(log_entry)
     
@@ -541,7 +579,7 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                             st.download_button(
                                 label="📥 CSV 다운로드",
                                 data=csv,
-                                file_name=f"slippage_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                file_name=f"slippage_results_{get_kst_now().strftime('%Y%m%d_%H%M%S')}.csv",
                                 mime="text/csv"
                             )
                             
@@ -606,16 +644,16 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                                                     from datetime import datetime, timedelta
                                                     
                                                     # 종료 시간 계산
-                                                    end_time = datetime.now() + timedelta(hours=end_hours_value)
+                                                    end_time = get_kst_now() + timedelta(hours=end_hours_value)
                                                     
                                                     # 로그에 기록 (logger 사용)
                                                     if logger_obj:
-                                                        log_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [INFO] 자동 종료 예정 시간: {end_time.strftime('%H:%M:%S')} ({end_hours_value}시간 후)"
+                                                        log_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [INFO] 자동 종료 예정 시간: {end_time.strftime('%H:%M:%S')} ({end_hours_value}시간 후)"
                                                         logger_obj.log(log_msg, "INFO")
                                                     
                                                     # 종료 시간까지 대기
-                                                    while datetime.now() < end_time:
-                                                        remaining = end_time - datetime.now()
+                                                    while get_kst_now() < end_time:
+                                                        remaining = end_time - get_kst_now()
                                                         hours = int(remaining.total_seconds() // 3600)
                                                         minutes = int((remaining.total_seconds() % 3600) // 60)
                                                         seconds = int(remaining.total_seconds() % 60)
@@ -623,7 +661,7 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                                                         # 매 10초마다 카운트다운 로그
                                                         if seconds % 10 == 0:
                                                             if logger_obj:
-                                                                countdown_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [INFO] 자동 종료까지 남은 시간: {hours:02d}시간 {minutes:02d}분 {seconds:02d}초"
+                                                                countdown_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [INFO] 자동 종료까지 남은 시간: {hours:02d}시간 {minutes:02d}분 {seconds:02d}초"
                                                                 logger_obj.log(countdown_msg, "INFO")
                                                         
                                                         time.sleep(1)
@@ -636,7 +674,7 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                                                     if coins_dict:
                                                         try:
                                                             if logger_obj:
-                                                                log_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [INFO] 자동 종료 시간 도달! 전량 매도 시작..."
+                                                                log_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [INFO] 자동 종료 시간 도달! 전량 매도 시작..."
                                                                 logger_obj.log(log_msg, "INFO")
                                                             
                                                             # utils에서 cancel_all_orders_and_sell_all 함수 import
@@ -654,14 +692,14 @@ if st.session_state.run_analysis and 'analysis_params' in st.session_state:
                                                                 )
                                                             
                                                             if logger_obj:
-                                                                log_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [SUCCESS] 자동 종료 매도 완료!"
+                                                                log_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [SUCCESS] 자동 종료 매도 완료!"
                                                                 logger_obj.log(log_msg, "SUCCESS")
                                                             
                                                             # purchased_coins 초기화 (메인 스레드에서 처리하도록 큐 사용)
                                                             # 스레드 내에서는 직접 수정하지 않음
                                                         except Exception as e:
                                                             if logger_obj:
-                                                                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] [ERROR] 자동 종료 매도 중 오류: {e}"
+                                                                error_msg = f"[{get_kst_now().strftime('%H:%M:%S')}] [ERROR] 자동 종료 매도 중 오류: {e}"
                                                                 logger_obj.log(error_msg, "ERROR")
                                                 
                                                 # 자동 종료 스레드 시작
@@ -844,7 +882,7 @@ if st.session_state.show_slippage_results:
                 if filtered_results:
                     html_content = get_slippage_result_html(filtered_results, max_slippage, selected_file)
                     if html_content:
-                        temp_file = os.path.join(tempfile.gettempdir(), f'slippage_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html')
+                        temp_file = os.path.join(tempfile.gettempdir(), f'slippage_results_{get_kst_now().strftime("%Y%m%d_%H%M%S")}.html')
                         with open(temp_file, 'w', encoding='utf-8') as f:
                             f.write(html_content)
                         
@@ -958,7 +996,7 @@ if st.session_state.show_profit_results:
             
             html_content = get_profit_result_html(profit_results)
             if html_content:
-                temp_file = os.path.join(tempfile.gettempdir(), f'profit_results_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html')
+                temp_file = os.path.join(tempfile.gettempdir(), f'profit_results_{get_kst_now().strftime("%Y%m%d_%H%M%S")}.html')
                 with open(temp_file, 'w', encoding='utf-8') as f:
                     f.write(html_content)
                 
