@@ -97,6 +97,18 @@ st.set_page_config(
 # 제목
 st.title("📈 업비트 펌핑코인 알리미V2")
 
+# Railway IP 확인 버튼 (개발/배포 시 사용)
+if st.sidebar.button("🔍 Railway IP 확인", help="Railway의 현재 IP 주소를 확인합니다. 업비트 API에 등록할 IP입니다."):
+    try:
+        import requests
+        response = requests.get('https://api.ipify.org?format=json', timeout=5)
+        railway_ip = response.json()['ip']
+        st.sidebar.success(f"✅ Railway IP: {railway_ip}")
+        st.sidebar.info("📝 이 IP를 업비트 API에 등록하세요!")
+        st.sidebar.code(railway_ip)
+    except Exception as e:
+        st.sidebar.error(f"❌ IP 확인 실패: {e}")
+
 # 결과 보기 버튼 (제목 아래)
 col_result1, col_result2 = st.columns(2)
 with col_result1:
