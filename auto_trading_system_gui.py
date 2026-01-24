@@ -135,9 +135,25 @@ class ToolTip:
 # ============================================================================
 
 def load_api_keys_from_json():
-    """api.json 파일에서 API 키를 읽어옵니다."""
+    """환경 변수 또는 api.json 파일에서 API 키를 읽어옵니다."""
+    # 1. 환경 변수에서 먼저 확인 (Railway Secrets 우선)
+    api_key = os.getenv("UPBIT_API_KEY")
+    secret_key = os.getenv("UPBIT_SECRET_KEY")
+    
+    if api_key and secret_key:
+        return api_key.strip(), secret_key.strip()
+    
+    # 2. api.json 파일에서 읽기
     try:
-        with open("api.json", "r", encoding="utf-8") as f:
+        # DATA_DIR 또는 현재 디렉토리에서 api.json 찾기
+        data_dir = os.getenv("DATA_DIR", ".")
+        api_json_path = os.path.join(data_dir, "api.json")
+        
+        # DATA_DIR에 없으면 현재 디렉토리에서 찾기
+        if not os.path.exists(api_json_path):
+            api_json_path = "api.json"
+        
+        with open(api_json_path, "r", encoding="utf-8") as f:
             content = f.read()
             
         # JSON 형식이 아닌 경우를 대비하여 정규식으로 추출
