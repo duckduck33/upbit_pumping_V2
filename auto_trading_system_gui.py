@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 업비트 자동 매매 시스템 (GUI 버전)
 
@@ -343,8 +343,12 @@ def print_all_coin_list(coins, logger=None):
 
 
 def print_coins_under_price_and_volume(coins, max_price=None, min_volume=1000000000, 
-                                       max_volume=None, interval_minutes=3, target_hour=9, target_minute=0, logger=None, stop_event=None):
-    """거래대금 조건을 만족하는 코인 리스트를 출력하고, 분봉 데이터도 함께 수집합니다."""
+                                       max_volume=None, interval_minutes=1, target_hour=9, target_minute=0, logger=None, stop_event=None):
+    """거래대금 조건을 만족하는 코인 리스트를 출력하고, 1분봉 데이터도 함께 수집합니다.
+    
+    항상 1분봉만 사용하며, 정시 기준으로 비교합니다.
+    예) 오후 7시면 6시59분봉과 7시00분봉 비교
+    """
     if logger:
         logger.log("=" * 60, "INFO")
         if max_price:
@@ -352,43 +356,26 @@ def print_coins_under_price_and_volume(coins, max_price=None, min_volume=1000000
         else:
             logger.log(f"2. 거래대금 {min_volume/100000000:,.0f}억원 이상", "INFO")
         logger.log("=" * 60, "INFO")
-        logger.log(f"분봉 간격: {interval_minutes}분봉, 분석 시간: {target_hour:02d}:{target_minute:02d}", "INFO")
+        logger.log(f"1분봉 비교: {target_hour:02d}:{target_minute:02d} 기준 (정시)", "INFO")
     
     final_filtered_coins = []
-    target_date = get_kst_now().date()
+    # ------------------------------------------------------------------------
+    # 정시 기준 1분봉 비교
+    # 예) 오후 7시면 6시59분봉과 7시00분봉 비교
+    # ------------------------------------------------------------------------
+    now_kst = get_kst_now()
+    now = now_kst.replace(tzinfo=None)
+    target_date = now.date()
     
-    # 분봉 간격에 따라 interval 설정
-    interval_map = {
-        1: "minute1",
-        2: "minute2",
-        3: "minute3",
-        5: "minute5",
-        15: "minute15",
-        30: "minute30",
-        60: "minute60"
-    }
-    interval = interval_map.get(interval_minutes, "minute3")
-    
-    # 분석할 시간 계산 (예: 9시 3분이면 9시 0분, 9시 3분)
-    # 이전 구간: 기준 시간 - 분봉 간격 ~ 기준 시간
-    before_minute_total = target_hour * 60 + target_minute - interval_minutes
-    before_hour = before_minute_total // 60
-    before_min = before_minute_total % 60
-    if before_hour < 0:
-        before_hour += 24
-    
-    # 이후 구간: 기준 시간 ~ 기준 시간 + 분봉 간격
-    after_minute_total = target_hour * 60 + target_minute + interval_minutes
-    after_hour = after_minute_total // 60
-    after_min = after_minute_total % 60
-    if after_hour >= 24:
-        after_hour -= 24
+    # 정시 기준: target_hour:00분봉과 (target_hour-1):59분봉 비교
+    candle2_time = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+    candle1_time = candle2_time - timedelta(minutes=1)  # 직전 1분봉
     
     if logger:
         logger.log(f"분석 구간:", "INFO")
-        logger.log(f"  이전 구간: {before_hour:02d}:{before_min:02d} ~ {target_hour:02d}:{target_minute:02d}", "INFO")
-        logger.log(f"  이후 구간: {target_hour:02d}:{target_minute:02d} ~ {after_hour:02d}:{after_min:02d}", "INFO")
-        logger.log(f"가격, 거래대금 및 {interval_minutes}분봉 정보 확인 중...", "INFO")
+        logger.log(f"  이전 1분봉: {candle1_time.strftime('%H:%M')}", "INFO")
+        logger.log(f"  이후 1분봉: {candle2_time.strftime('%H:%M')}", "INFO")
+        logger.log(f"가격, 거래대금 및 1분봉 정보 확인 중...", "INFO")
     
     # 배치로 현재가 조회 (100개씩)
     if logger:
@@ -464,31 +451,43 @@ def print_coins_under_price_and_volume(coins, max_price=None, min_volume=1000000
             acc_trade_price_24h = ticker.get('acc_trade_price_24h', 0)
             
             if acc_trade_price_24h and acc_trade_price_24h >= min_volume and (max_volume is None or acc_trade_price_24h <= max_volume):
-                # 분봉 데이터 가져오기
+                # 1분봉 데이터 가져오기 (정시 기준 비교)
                 df_candle = None
                 candle1 = None
                 candle2 = None
                 coin_info = {}
                 
                 try:
-                    df_candle = pyupbit.get_ohlcv(coin, interval=interval, count=200)
+                    # 항상 1분봉만 사용 (충분히 넉넉하게 가져오기)
+                    df_candle = pyupbit.get_ohlcv(coin, interval="minute1", count=200)
                     if df_candle is not None and not df_candle.empty:
                         target_date_df = df_candle[df_candle.index.date == target_date]
                         if not target_date_df.empty:
-                            # 이전 구간 데이터 찾기
+                            # 정시 기준: candle1_time(예: 18:59)과 candle2_time(예: 19:00)의 1분봉 직접 찾기
                             for idx_time in target_date_df.index:
-                                if idx_time.hour == before_hour and idx_time.minute == before_min:
+                                if idx_time.hour == candle1_time.hour and idx_time.minute == candle1_time.minute:
                                     candle1 = target_date_df.loc[idx_time]
                                     break
                             
-                            # 이후 구간 데이터 찾기
                             for idx_time in target_date_df.index:
-                                if idx_time.hour == after_hour and idx_time.minute == after_min:
+                                if idx_time.hour == candle2_time.hour and idx_time.minute == candle2_time.minute:
                                     candle2 = target_date_df.loc[idx_time]
                                     break
                             
+                            # 캔들 존재 여부 로그 출력
+                            coin_symbol = coin.replace("KRW-", "")
+                            if candle1 is None:
+                                if logger:
+                                    logger.log(f"  {coin_symbol}: candle1 ({candle1_time.strftime('%H:%M')}) 존재하지 않음", "WARNING")
+                            if candle2 is None:
+                                if logger:
+                                    logger.log(f"  {coin_symbol}: candle2 ({candle2_time.strftime('%H:%M')}) 존재하지 않음", "WARNING")
+                            
                             coin_info['df_candle'] = target_date_df
-                except Exception:
+                except Exception as e:
+                    if logger:
+                        coin_symbol = coin.replace("KRW-", "")
+                        logger.log(f"  {coin_symbol}: 캔들 데이터 조회 중 오류 - {e}", "ERROR")
                     pass
                 
                 final_filtered_coins.append({
@@ -522,8 +521,16 @@ def print_coins_under_price_and_volume(coins, max_price=None, min_volume=1000000
     return final_filtered_coins
 
 
-def print_3minute_candles(filtered_coins, interval_minutes=3, target_hour=9, logger=None):
-    """분봉 데이터를 분석하여 가격, 거래량이 상승한 코인만 출력합니다."""
+def print_3minute_candles(filtered_coins, interval_minutes=3, target_hour=9, logger=None, return_details=False):
+    """분봉 데이터를 분석하여 가격/거래량이 상승한 코인을 선별합니다.
+
+    Args:
+        filtered_coins: 2단계 통과 코인 리스트
+        interval_minutes: 분봉
+        target_hour: 타겟 시각(표시용)
+        logger: 로거
+        return_details: True면 (통과리스트, 전체상세리스트) 반환
+    """
     if logger:
         logger.log("=" * 60, "INFO")
         logger.log(f"3. {target_hour:02d}시 전후 {interval_minutes}분봉 분석 (가격/거래량 상승 코인)", "INFO")
@@ -531,43 +538,97 @@ def print_3minute_candles(filtered_coins, interval_minutes=3, target_hour=9, log
         logger.log(f"{interval_minutes}분봉 데이터 분석 중...", "INFO")
     
     rising_coins = []
+    details = []
     
     for coin_info in filtered_coins:
+        detail = {
+            'stage': 3,
+            'coin': coin_info.get('coin'),
+            'coin_symbol': (coin_info.get('coin') or '').replace("KRW-", ""),
+            'current_price': coin_info.get('current_price'),
+            'volume_24h': coin_info.get('volume_24h'),
+            'interval_minutes': interval_minutes,
+            'pass': False,
+            'fail_reason': None,
+        }
         try:
-            candle1 = coin_info['candle1']
-            candle2 = coin_info['candle2']
-            
+            candle1 = coin_info.get('candle1')
+            candle2 = coin_info.get('candle2')
+            detail['candle1_exists'] = candle1 is not None
+            detail['candle2_exists'] = candle2 is not None
+
             if candle1 is None or candle2 is None:
+                missing_candles = []
+                if candle1 is None:
+                    missing_candles.append("candle1")
+                if candle2 is None:
+                    missing_candles.append("candle2")
+                detail['fail_reason'] = 'candle_missing'
+                detail['missing_candles'] = ', '.join(missing_candles)
+                if logger:
+                    coin_symbol = detail.get('coin_symbol', '')
+                    logger.log(f"  {coin_symbol}: 캔들 존재하지 않음 ({', '.join(missing_candles)})", "WARNING")
+                details.append(detail)
                 continue
-            
+
             price1 = candle1['close']
             price2 = candle2['close']
             volume1 = candle1['volume']
             volume2 = candle2['volume']
             value1 = candle1.get('value', 0) if 'value' in candle1 else 0
             value2 = candle2.get('value', 0) if 'value' in candle2 else 0
-            
-            if price2 > price1 and volume2 > volume1:
-                price_change = ((price2 - price1) / price1) * 100
-                volume_change = ((volume2 - volume1) / volume1) * 100 if volume1 > 0 else 0
-                value_change = ((value2 - value1) / value1) * 100 if value1 > 0 else 0
-                
-                rising_coins.append({
-                    'coin': coin_info['coin'],
-                    'current_price': coin_info['current_price'],
-                    'volume_24h': coin_info['volume_24h'],
-                    'price1': price1,
-                    'price2': price2,
-                    'price_change': price_change,
-                    'volume1': volume1,
-                    'volume2': volume2,
-                    'volume_change': volume_change,
-                    'value1': value1,
-                    'value2': value2,
-                    'value_change': value_change,
-                    'df_candle': coin_info.get('df_candle')
-                })
-        except Exception:
+
+            detail.update({
+                'price1': price1,
+                'price2': price2,
+                'volume1': volume1,
+                'volume2': volume2,
+                'value1': value1,
+                'value2': value2,
+            })
+
+            price_change = ((price2 - price1) / price1) * 100 if price1 else 0
+            volume_change = ((volume2 - volume1) / volume1) * 100 if volume1 else 0
+            value_change = ((value2 - value1) / value1) * 100 if value1 else 0
+
+            detail.update({
+                'price_change': price_change,
+                'volume_change': volume_change,
+                'value_change': value_change,
+            })
+
+            if not (price2 > price1):
+                detail['fail_reason'] = 'price_not_up'
+                details.append(detail)
+                continue
+
+            if not (volume2 > volume1):
+                detail['fail_reason'] = 'volume_not_up'
+                details.append(detail)
+                continue
+
+            # 통과
+            detail['pass'] = True
+            details.append(detail)
+            rising_coins.append({
+                'coin': coin_info['coin'],
+                'current_price': coin_info['current_price'],
+                'volume_24h': coin_info['volume_24h'],
+                'price1': price1,
+                'price2': price2,
+                'price_change': price_change,
+                'volume1': volume1,
+                'volume2': volume2,
+                'volume_change': volume_change,
+                'value1': value1,
+                'value2': value2,
+                'value_change': value_change,
+                'df_candle': coin_info.get('df_candle')
+            })
+        except Exception as e:
+            detail['fail_reason'] = 'exception'
+            detail['error'] = str(e)
+            details.append(detail)
             continue
     
     rising_coins.sort(key=lambda x: x['volume_change'], reverse=True)
@@ -585,20 +646,53 @@ def print_3minute_candles(filtered_coins, interval_minutes=3, target_hour=9, log
             if len(rising_coins) > 10:
                 logger.log(f"... 외 {len(rising_coins)-10}개 코인", "INFO")
     
+    if return_details:
+        return rising_coins, details
     return rising_coins
 
 
-def print_filtered_coins_by_price_volume(rising_coins, price_change_min=0.5, price_change_max=5.0, volume_change_min=100.0, logger=None):
-    """가격 변동률 및 거래량변동 필터링된 코인 리스트를 출력합니다."""
+def print_filtered_coins_by_price_volume(rising_coins, price_change_min=0.5, price_change_max=5.0, volume_change_min=100.0, logger=None, return_details=False):
+    """가격/거래량 변동률 기준으로 필터링합니다.
+
+    return_details=True면 (통과리스트, 전체상세리스트) 반환
+    """
     if logger:
         logger.log("=" * 60, "INFO")
         logger.log(f"4. 가격 변동률 {price_change_min}~{price_change_max}%, 거래량변동 {volume_change_min}% 이상인 코인 리스트", "INFO")
         logger.log("=" * 60, "INFO")
     
-    filtered_coins = [
-        coin_info for coin_info in rising_coins 
-        if price_change_min <= coin_info['price_change'] <= price_change_max and coin_info['volume_change'] >= volume_change_min
-    ]
+    details = []
+    filtered_coins = []
+    for coin_info in rising_coins:
+        price_change = coin_info.get('price_change', 0)
+        volume_change = coin_info.get('volume_change', 0)
+        passed = True
+        reasons = []
+        if price_change < price_change_min:
+            passed = False
+            reasons.append('price_change_below_min')
+        if price_change > price_change_max:
+            passed = False
+            reasons.append('price_change_above_max')
+        if volume_change < volume_change_min:
+            passed = False
+            reasons.append('volume_change_below_min')
+
+        detail = {
+            'stage': 4,
+            'coin': coin_info.get('coin'),
+            'coin_symbol': (coin_info.get('coin') or '').replace("KRW-", ""),
+            'price_change': price_change,
+            'volume_change': volume_change,
+            'price_change_min': price_change_min,
+            'price_change_max': price_change_max,
+            'volume_change_min': volume_change_min,
+            'pass': passed,
+            'fail_reason': ",".join(reasons) if reasons else None,
+        }
+        details.append(detail)
+        if passed:
+            filtered_coins.append(coin_info)
     
     filtered_coins.sort(key=lambda x: x['volume_change'], reverse=True)
     
@@ -608,6 +702,8 @@ def print_filtered_coins_by_price_volume(rising_coins, price_change_min=0.5, pri
             coin_names = [coin_info['coin'].replace("KRW-", "") for coin_info in filtered_coins]
             logger.log(f"필터링 통과 코인: {', '.join(coin_names)}", "INFO")
     
+    if return_details:
+        return filtered_coins, details
     return filtered_coins
 
 
@@ -615,8 +711,13 @@ def print_filtered_coins_by_price_volume(rising_coins, price_change_min=0.5, pri
 # 시장가 매수 분석 함수
 # ============================================================================
 
-def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2):
-    """시장가 매수 시 몇% 이내로 매수가 가능한지 계산합니다."""
+def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2, return_detail=False):
+    """시장가 매수 시 몇% 이내로 매수가 가능한지 계산합니다.
+
+    return_detail=True면 성공/실패 사유를 포함한 dict를 반환합니다.
+    - 성공: {'ok': True, 'data': {...}}
+    - 실패: {'ok': False, 'reason': '<reason>', ...}
+    """
     try:
         url = "https://api.upbit.com/v1/orderbook"
         params = {"markets": coin}
@@ -651,6 +752,8 @@ def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2):
                                 highest_bid = bid_price
                 
                 if not asks or lowest_ask is None:
+                    if return_detail:
+                        return {'ok': False, 'reason': 'orderbook_empty'}
                     return None
                 
                 # 호가 스프레드 계산 (최우선 매도호가와 최우선 매수호가의 차이)
@@ -658,6 +761,15 @@ def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2):
                     spread_pct = ((lowest_ask - highest_bid) / highest_bid) * 100
                     # 호가 스프레드가 설정값을 넘으면 제외
                     if spread_pct > max_spread:
+                        if return_detail:
+                            return {
+                                'ok': False,
+                                'reason': 'spread_exceeded',
+                                'spread_pct': spread_pct,
+                                'lowest_ask': lowest_ask,
+                                'highest_bid': highest_bid,
+                                'max_spread': max_spread,
+                            }
                         return None
                 
                 asks.sort(key=lambda x: x[0])
@@ -703,7 +815,7 @@ def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2):
                 # 호가 스프레드 계산 (이미 위에서 계산됨)
                 spread_pct = ((lowest_ask - highest_bid) / highest_bid) * 100 if highest_bid and highest_bid > 0 else 0
                 
-                return {
+                data = {
                     'lowest_ask': lowest_ask,
                     'avg_price': avg_price,
                     'price_diff_pct': price_diff_pct,
@@ -712,13 +824,23 @@ def get_market_buy_percentage(coin, buy_amount=10000000, max_spread=0.2):
                     'filled_asks_count': len(filled_asks),
                     'spread_pct': spread_pct  # 호가스프레드 추가
                 }
+                if return_detail:
+                    return {'ok': True, 'data': data}
+                return data
+        if return_detail:
+            return {'ok': False, 'reason': 'http_error', 'status_code': response.status_code}
         return None
-    except Exception:
+    except Exception as e:
+        if return_detail:
+            return {'ok': False, 'reason': 'exception', 'error': str(e)}
         return None
 
 
-def print_all_coins_market_buy_analysis(rising_coins, buy_amount=10000000, max_spread=0.2, logger=None):
-    """모든 코인에 대해 시장가 매수 분석을 출력합니다."""
+def print_all_coins_market_buy_analysis(rising_coins, buy_amount=10000000, max_spread=0.2, logger=None, return_details=False):
+    """모든 코인에 대해 시장가 매수 분석을 수행합니다.
+
+    return_details=True면 (통과리스트, 전체상세리스트) 반환
+    """
     if logger:
         logger.log("=" * 60, "INFO")
         logger.log(f"5. 시장가 매수 분석 (1000만원)", "INFO")
@@ -726,14 +848,16 @@ def print_all_coins_market_buy_analysis(rising_coins, buy_amount=10000000, max_s
         logger.log(f"시장가 매수 분석 중... (총 {len(rising_coins)}개 코인)", "INFO")
     
     analysis_results = []
-    excluded_by_spread = []  # 호가 스프레드로 제외된 코인 리스트
+    excluded_by_spread = []  # 호가 스프레드로 제외된 코인 리스트 (기존 로그용)
+    details = []
     
     for idx, coin_info in enumerate(rising_coins, 1):
         coin = coin_info['coin']
         coin_symbol = coin.replace("KRW-", "")
-        result = get_market_buy_percentage(coin, buy_amount, max_spread)
+        detail_result = get_market_buy_percentage(coin, buy_amount, max_spread, return_detail=True)
         
-        if result:
+        if detail_result and detail_result.get('ok'):
+            result = detail_result['data']
             analysis_results.append({
                 'coin': coin,
                 'price_change': coin_info['price_change'],
@@ -744,9 +868,37 @@ def print_all_coins_market_buy_analysis(rising_coins, buy_amount=10000000, max_s
                 'filled_asks_count': result['filled_asks_count'],
                 'spread_pct': result.get('spread_pct', 0)  # 호가스프레드 추가
             })
+            details.append({
+                'stage': 5,
+                'coin': coin,
+                'coin_symbol': coin_symbol,
+                'price_change': coin_info.get('price_change', 0),
+                'volume_change': coin_info.get('volume_change', 0),
+                'lowest_ask': result.get('lowest_ask'),
+                'avg_price': result.get('avg_price'),
+                'price_diff_pct': result.get('price_diff_pct'),
+                'filled_asks_count': result.get('filled_asks_count'),
+                'spread_pct': result.get('spread_pct', 0),
+                'pass': True,
+                'fail_reason': None,
+            })
         else:
-            # 호가 스프레드가 설정값을 넘어서 제외된 경우
-            excluded_by_spread.append(coin_symbol)
+            reason = detail_result.get('reason') if isinstance(detail_result, dict) else 'unknown'
+            if reason == 'spread_exceeded':
+                excluded_by_spread.append(coin_symbol)
+            details.append({
+                'stage': 5,
+                'coin': coin,
+                'coin_symbol': coin_symbol,
+                'price_change': coin_info.get('price_change', 0),
+                'volume_change': coin_info.get('volume_change', 0),
+                'pass': False,
+                'fail_reason': reason,
+                'status_code': detail_result.get('status_code') if isinstance(detail_result, dict) else None,
+                'spread_pct': detail_result.get('spread_pct') if isinstance(detail_result, dict) else None,
+                'max_spread': max_spread,
+                'error': detail_result.get('error') if isinstance(detail_result, dict) else None,
+            })
         
         if logger and idx % 5 == 0:
             logger.log(f"  [{idx}/{len(rising_coins)}] 분석 완료", "INFO")
@@ -759,6 +911,8 @@ def print_all_coins_market_buy_analysis(rising_coins, buy_amount=10000000, max_s
         if excluded_by_spread:
             logger.log(f"호가 스프레드 {max_spread}% 초과로 제외된 코인: {len(excluded_by_spread)}개 ({', '.join(excluded_by_spread)})", "INFO")
     
+    if return_details:
+        return analysis_results, details
     return analysis_results
 
 
@@ -1266,8 +1420,11 @@ def write_slippage_csv_and_popup(filtered_results, max_slippage, logger=None, ro
     return csv_filename
 
 
-def print_filtered_by_slippage(analysis_results, max_slippage=0.3, logger=None, root=None, skip_csv_and_popup=False):
-    """시장가 매수 분석 결과 중 슬리피지 이내인 코인만 출력합니다."""
+def print_filtered_by_slippage(analysis_results, max_slippage=0.3, logger=None, root=None, skip_csv_and_popup=False, return_details=False):
+    """시장가 매수 분석 결과 중 슬리피지 이내인 코인만 선별합니다.
+
+    return_details=True면 (통과리스트, 전체상세리스트) 반환
+    """
     if logger:
         logger.log("=" * 60, "INFO")
         logger.log(f"6. 펌핑가능 코인중 슬리피지 {max_slippage}% 이내인 코인 리스트", "INFO")
@@ -1278,10 +1435,28 @@ def print_filtered_by_slippage(analysis_results, max_slippage=0.3, logger=None, 
             logger.log("분석 결과가 없습니다.", "WARNING")
         return []
     
-    filtered_results = [
-        result for result in analysis_results 
-        if result['price_diff_pct'] <= max_slippage
-    ]
+    details = []
+    filtered_results = []
+    for result in analysis_results:
+        price_diff_pct = result.get('price_diff_pct', float('inf'))
+        passed = price_diff_pct <= max_slippage
+        details.append({
+            'stage': 6,
+            'coin': result.get('coin'),
+            'coin_symbol': (result.get('coin') or '').replace("KRW-", ""),
+            'price_change': result.get('price_change', 0),
+            'volume_change': result.get('volume_change', 0),
+            'lowest_ask': result.get('lowest_ask'),
+            'avg_price': result.get('avg_price'),
+            'price_diff_pct': price_diff_pct,
+            'spread_pct': result.get('spread_pct', 0),
+            'filled_asks_count': result.get('filled_asks_count'),
+            'max_slippage': max_slippage,
+            'pass': passed,
+            'fail_reason': None if passed else 'slippage_exceeded',
+        })
+        if passed:
+            filtered_results.append(result)
     
     filtered_results.sort(key=lambda x: x['price_diff_pct'])
     
@@ -1303,6 +1478,8 @@ def print_filtered_by_slippage(analysis_results, max_slippage=0.3, logger=None, 
             if len(filtered_results) > 10:
                 logger.log(f"... 외 {len(filtered_results)-10}개 코인", "INFO")
     
+    if return_details:
+        return filtered_results, details
     return filtered_results
 
 
@@ -1355,9 +1532,27 @@ def filter_by_day_candle(filtered_results, min_bullish_ratio=0.4, logger=None, s
                 filtered_by_candle.append(result)
                 continue
             
+            # 일봉 날짜 범위 확인 (로깅용)
+            if logger and idx == 1:  # 첫 번째 코인에서만 전체 범위 로그 출력
+                if not df_day.empty:
+                    first_date = df_day.index[0].strftime('%Y-%m-%d')
+                    last_date = df_day.index[-1].strftime('%Y-%m-%d')
+                    logger.log(f"📅 일봉 확인 범위: {first_date} ~ {last_date} (총 {len(df_day)}개)", "INFO")
+            
             # 양봉 개수 계산 (종가 > 시가)
             bullish_count = 0
             total_count = len(df_day)
+            
+            # 각 일봉의 날짜와 양봉 여부를 로그로 출력 (첫 번째 코인만 상세히)
+            if logger and idx == 1:
+                logger.log(f"  일봉 상세 (첫 번째 코인 {coin_symbol} 기준):", "INFO")
+                for date_idx, (date, row) in enumerate(df_day.iterrows()):
+                    open_price = row['open']
+                    close_price = row['close']
+                    is_bullish = close_price > open_price
+                    date_str = date.strftime('%Y-%m-%d')
+                    bullish_mark = "✅ 양봉" if is_bullish else "❌ 음봉"
+                    logger.log(f"    {date_str}: {bullish_mark} (시가: {open_price:,.0f}, 종가: {close_price:,.0f})", "INFO")
             
             for _, row in df_day.iterrows():
                 open_price = row['open']
@@ -1730,10 +1925,12 @@ def buy_coins_from_list(upbit, coin_list, sell_percentage=3, sell_ratio=0.5, inv
                                     'buy_price': actual_buy_price,
                                     'buy_time': get_kst_now(),
                                     'buy_amount': buy_amount_per_coin,
-                                    'coin_balance': float(coin_balance),
+                                    'buy_quantity': float(coin_balance),  # 원래 매수 수량 저장
+                                    'coin_balance': float(coin_balance),  # 현재 남은 수량 (지정가 매도로 줄어들 수 있음)
                                     'sell_order_uuid': sell_order_uuid,  # 지정가 매도 주문 UUID 저장
                                     'sell_price_limit': sell_price,  # 지정가 매도 가격 저장
-                                    'sell_volume': sell_volume  # 지정가 매도 수량 저장
+                                    'sell_volume': sell_volume,  # 지정가 매도 수량 저장
+                                    'limit_sell_quantity': 0  # 지정가 매도 체결 수량 (초기값 0)
                                 }
                             
                             results.append({
@@ -3206,10 +3403,17 @@ class TradingGUI:
                                                 buy_price = info.get('buy_price', 0)
                                                 coin_balance = info.get('coin_balance', 0)
                                                 
-                                                # 실제 체결된 수량만으로 계산 (지정가 매도 수량)
-                                                actual_sell_volume = executed_volume
-                                                if actual_sell_volume > 0 and coin_balance > 0:
-                                                    buy_amount_for_sold = (actual_sell_volume / coin_balance) * (coin_balance * buy_price)
+                                                # 지정가 매도 체결 수량 (정확한 계산)
+                                                limit_sell_quantity = executed_volume
+                                                
+                                                # 매수 정보 가져오기
+                                                buy_quantity = info.get('buy_quantity', coin_balance)  # 원래 매수 수량
+                                                
+                                                # 지정가 매도: 지정가 체결가격 * 체결수량
+                                                # buy_amount_for_sold: 지정가 매도된 부분의 매수금액
+                                                if limit_sell_quantity > 0 and buy_quantity > 0:
+                                                    # 지정가 매도된 부분의 매수금액 = (지정가 매도 수량 / 원래 매수 수량) * 원래 매수금액
+                                                    buy_amount_for_sold = (limit_sell_quantity / buy_quantity) * (buy_quantity * buy_price)
                                                     profit_pct = ((sell_price / buy_price) - 1) * 100 if buy_price > 0 else 0
                                                     profit_amount = sell_amount - buy_amount_for_sold
                                                     
@@ -3220,7 +3424,7 @@ class TradingGUI:
                                                         existing = self.sold_coins[coin]
                                                         existing['buy_amount'] = existing.get('buy_amount', 0) + buy_amount_for_sold
                                                         existing['sell_amount'] = existing.get('sell_amount', 0) + sell_amount
-                                                        existing['coin_balance'] = existing.get('coin_balance', 0) + actual_sell_volume
+                                                        existing['limit_sell_quantity'] = existing.get('limit_sell_quantity', 0) + limit_sell_quantity
                                                         # 전체 수익률 재계산
                                                         if existing['buy_amount'] > 0:
                                                             existing['profit_pct'] = ((existing['sell_amount'] / existing['buy_amount']) - 1) * 100
@@ -3228,25 +3432,29 @@ class TradingGUI:
                                                     else:
                                                         self.sold_coins[coin] = {
                                                             'buy_price': buy_price,
-                                                            'sell_price': sell_price,
-                                                            'buy_amount': buy_amount_for_sold,
-                                                            'sell_amount': sell_amount,
-                                                            'coin_balance': actual_sell_volume,  # 실제 매도된 수량
+                                                            'buy_quantity': buy_quantity,
+                                                            'limit_sell_price': sell_price,  # 지정가 매도 체결가격
+                                                            'limit_sell_quantity': limit_sell_quantity,  # 지정가 매도 체결수량
+                                                            'buy_amount': buy_amount_for_sold,  # 지정가 매도된 부분의 매수금액
+                                                            'sell_amount': sell_amount,  # 지정가 매도 금액 (체결가격 * 체결수량)
                                                             'profit_pct': profit_pct,
                                                             'profit_amount': profit_amount,
                                                             'sell_time': get_kst_now(),
                                                             'sell_reason': '지정가 익절'
                                                         }
                                                     
+                                                    # purchased_coins에 지정가 매도 체결 수량 저장
+                                                    info['limit_sell_quantity'] = limit_sell_quantity
+                                                    
                                                     # 남은 수량 계산 및 업데이트
-                                                    remaining_balance = coin_balance - actual_sell_volume
+                                                    remaining_balance = buy_quantity - limit_sell_quantity
                                                     
                                                     if remaining_balance > 0:
                                                         # 남은 수량이 있으면 purchased_coins에서 coin_balance만 업데이트하고 제거하지 않음
                                                         # 지정가 매도 주문 UUID를 제거하여 더 이상 모니터링하지 않도록 함
                                                         info['coin_balance'] = remaining_balance
                                                         info['sell_order_uuid'] = None  # 지정가 매도 완료 표시
-                                                        self.logger.log(f"  {coin_symbol}: 남은 수량 {remaining_balance}개 (종료시간에 매도 예정)", "INFO")
+                                                        self.logger.log(f"  {coin_symbol}: 지정가 매도 완료 ({limit_sell_quantity}개), 남은 수량 {remaining_balance}개 (종료시간에 매도 예정)", "INFO")
                                                     else:
                                                         # 남은 수량이 없으면 purchased_coins에서 제거
                                                         coins_to_remove.append(coin)
