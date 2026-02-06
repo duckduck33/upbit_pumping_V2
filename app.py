@@ -8,6 +8,7 @@ import os
 import re
 import json
 import threading
+import requests
 
 COIN = "KRW-XRP"
 BUY_AMOUNT_KRW = 10000  # 1만원
@@ -66,6 +67,19 @@ def run_auto_sell(upbit):
 
 st.set_page_config(page_title="리플 1만원 매수·4분 후 매도", page_icon="🪙", layout="centered")
 st.title("🪙 리플 1만원 매수 → 4분 후 자동 매도")
+
+# 서버 IP 확인 (업비트 API에 등록할 IP)
+with st.sidebar:
+    st.header("🔧 도구")
+    if st.button("🔍 서버 IP 확인", help="현재 서버의 공인 IP를 확인합니다. 이 IP를 업비트 API 설정에 등록하세요."):
+        try:
+            r = requests.get("https://api.ipify.org?format=json", timeout=5)
+            ip = r.json().get("ip", "확인 실패")
+            st.success(f"✅ 현재 서버 IP")
+            st.code(ip, language=None)
+            st.caption("이 IP를 업비트 [마이페이지 → API 관리]에서 등록해야 매수/매도가 가능합니다.")
+        except Exception as e:
+            st.error(f"❌ IP 확인 실패: {e}")
 
 if "auto_sell_done" not in st.session_state:
     st.session_state.auto_sell_done = False
